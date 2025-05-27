@@ -1,25 +1,33 @@
 mod lib;
 
-use std::{collections::HashMap, sync::mpsc::{self, Receiver}};
+use std::{
+    collections::HashMap,
+    sync::mpsc::{self, Receiver, Sender},
+};
 
-use crate::lib::{InMemoryChannelNetwork, Peer};
+use crate::lib::{InMemoryChannelNetwork, Message, Peer, PeerID};
 
 fn main() {
-    let (tx1, rx1) = mpsc::channel();
-    let (tx2, rx2) = mpsc::channel();
-    let (tx3, rx3) = mpsc::channel();
+    let num_of_peers = 3;
+    let mut channels: Vec<(Sender<Message>, Receiver<Message>)> = Vec::new();
+    for _ in 0..num_of_peers {
+        channels.push(mpsc::channel());
+    }
 
-    let network_of_first_peer = InMemoryChannelNetwork {
-        incoming: rx1,
-        outgoing: HashMap::from([(2, tx2), (3, tx3.clone())]),
-    };
-    let network_of_second_peer = InMemoryChannelNetwork {
-        incoming: rx2,
-        outgoing: HashMap::from([(1, tx1), (3, tx3.clone())]),
-    };
-    let firstPeer = Peer {
-        id: 1,
-        network: network_of_first_peer,
-    };
-    firstPeer.run();
+    for i in 0..num_of_peers {
+        let peer = Peer { id: PeerID(i) };
+        let incoming_channel = channels[i as usize].1;
+        let mut outgoing_channels = HashMap::new();
+        for (idx, &item) in channels.iter().enumerate() {
+            if idx != i.try_into().unwrap() {
+                outgoing_channels.insert(PeerID(idx as u32), item.0);
+            }
+        }
+
+        let network = InMemoryChannelNetwork {
+            incoming: incoming_channel,
+            outgoing: outgoing_channels,
+        };
+        peer.run(network);
+    }
 }
