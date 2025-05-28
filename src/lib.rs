@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
-    sync::mpsc::{Receiver, Sender},
-    thread,
-    thread::sleep,
+    sync::mpsc::{Receiver, Sender, TryRecvError},
+    thread::{self, sleep},
     time::Duration,
 };
 
@@ -45,7 +44,7 @@ impl Peer {
 
             match network.incoming.try_recv() {
                 Ok(msg) => println!("{:?} received: {:?}", self.id, msg),
-                Err(e) => println!("Error encountered: {}", e),
+                Err(e) => if e != TryRecvError::Empty {println!("Error encountered: {}", e)},
             }
 
             sleep(Duration::from_secs(network.idle_time_secs));
