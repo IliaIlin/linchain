@@ -6,11 +6,12 @@ use std::{
     time::Duration,
 };
 
-use rand::Rng;
+use rand::seq::IteratorRandom;
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
 pub struct PeerID(pub u32);
 
+#[derive(Debug)]
 pub enum Message {
     PlainText(String),
 }
@@ -23,11 +24,10 @@ impl Peer {
     pub fn run(&self, network: InMemoryChannelNetwork) {
         let mut random = rand::rng();
         loop {
-            let peer_id_to_connect_to =
-                PeerID(random.random_range(0..network.outgoing.len() as u32));
+            let peer_id_to_connect_to = network.outgoing.keys().choose(&mut random).unwrap();
             let message = Message::PlainText(format!("Hi from {:?}", peer_id_to_connect_to));
             //thread::spawn(move || {
-            match network.send(peer_id_to_connect_to, message) {
+            match network.send(*peer_id_to_connect_to, message) {
                 Ok(_) => {
                     println!(
                         "Successfully sent message from {:?} to {:?}",
@@ -35,13 +35,18 @@ impl Peer {
                     );
                 }
                 Err(error) => {
-                   println!(
+                    println!(
                         "Error {:?} sending message from {:?} to {:?}",
                         error, self.id, peer_id_to_connect_to
-                    ); 
+                    );
                 }
             };
             //});
+
+            match network.incoming.try_recv() {
+                Ok(msg) => println!("{:?} received: {:?}", self.id, msg),
+                Err(e) => println!("Error encountered: {}", e),
+            }
 
             sleep(Duration::from_secs(network.idle_time_secs));
         }
@@ -57,7 +62,7 @@ enum NetworkError {
 pub struct InMemoryChannelNetwork {
     pub incoming: Receiver<Message>,
     pub outgoing: HashMap<PeerID, Sender<Message>>,
-    pub idle_time_secs: u64
+    pub idle_time_secs: u64,
 }
 
 impl InMemoryChannelNetwork {
