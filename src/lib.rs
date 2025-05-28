@@ -11,7 +11,7 @@ use rand::seq::IteratorRandom;
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
 pub struct PeerID(pub u32);
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Message {
     PlainText(String),
 }
@@ -25,7 +25,7 @@ impl Peer {
         let mut random = rand::rng();
         loop {
             let peer_id_to_connect_to = network.outgoing.keys().choose(&mut random).unwrap();
-            let message = Message::PlainText(format!("Hi from {:?}", peer_id_to_connect_to));
+            let message = Message::PlainText(format!("Hi from {:?}", self.id));
             //thread::spawn(move || {
             match network.send(*peer_id_to_connect_to, message) {
                 Ok(_) => {
@@ -35,7 +35,7 @@ impl Peer {
                     );
                 }
                 Err(error) => {
-                    println!(
+                    eprintln!(
                         "Error {:?} sending message from {:?} to {:?}",
                         error, self.id, peer_id_to_connect_to
                     );
@@ -54,7 +54,7 @@ impl Peer {
 }
 
 #[derive(Debug)]
-enum NetworkError {
+pub enum NetworkError {
     SendFailed,
     ReceiveFailed,
 }
@@ -66,14 +66,14 @@ pub struct InMemoryChannelNetwork {
 }
 
 impl InMemoryChannelNetwork {
-    fn send(&self, peer_id: PeerID, msg: Message) -> Result<(), NetworkError> {
+    pub fn send(&self, peer_id: PeerID, msg: Message) -> Result<(), NetworkError> {
         self.outgoing
             .get(&peer_id)
             .and_then(|sender| sender.send(msg).ok())
             .ok_or(NetworkError::SendFailed)
     }
 
-    fn receive(&self) -> Result<Message, NetworkError> {
+    pub fn receive(&self) -> Result<Message, NetworkError> {
         self.incoming
             .recv()
             .map_err(|_| NetworkError::ReceiveFailed)
