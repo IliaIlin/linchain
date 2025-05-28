@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "array"
+version = "0.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf27051ee75000297d5afad639a434ad6d3d7d3136ccaab75a1b7c439b9afa11"
+
+[[package]]
 name = "bitflags"
 version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -36,6 +42,7 @@ checksum = "d750af042f7ef4f724306de029d18836c26c1765a54a6a3f094cbd23a7267ffa"
 name = "linchain"
 version = "0.1.0"
 dependencies = [
+ "array",
  "rand",
  "serde",
 ]

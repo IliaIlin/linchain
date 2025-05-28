@@ -1,29 +1,54 @@
 use std::{
     collections::HashMap,
-    sync::mpsc::{Receiver, Sender}, thread::sleep, time::Duration,
+    sync::mpsc::{Receiver, Sender},
+    thread,
+    thread::sleep,
+    time::Duration,
 };
 
-use rand::RngCore;
+use rand::Rng;
 
-#[derive(Eq, Hash, PartialEq, Debug)]
+#[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
 pub struct PeerID(pub u32);
 
-pub struct Message(String);
+pub enum Message {
+    PlainText(String),
+}
 
 pub struct Peer {
     pub id: PeerID,
 }
 
 impl Peer {
-    pub fn run(&self, _network: InMemoryChannelNetwork) {
+    pub fn run(&self, network: InMemoryChannelNetwork) {
+        let mut random = rand::rng();
         loop {
-            let millis = rand::rng().next_u64();
-            sleep(Duration::from_millis(millis));
-            println!("Peer with id={:?} is active now", self.id)
+            let peer_id_to_connect_to =
+                PeerID(random.random_range(0..network.outgoing.len() as u32));
+            let message = Message::PlainText(format!("Hi from {:?}", peer_id_to_connect_to));
+            //thread::spawn(move || {
+            match network.send(peer_id_to_connect_to, message) {
+                Ok(_) => {
+                    println!(
+                        "Successfully sent message from {:?} to {:?}",
+                        self.id, peer_id_to_connect_to
+                    );
+                }
+                Err(error) => {
+                   println!(
+                        "Error {:?} sending message from {:?} to {:?}",
+                        error, self.id, peer_id_to_connect_to
+                    ); 
+                }
+            };
+            //});
+
+            sleep(Duration::from_secs(network.idle_time_secs));
         }
     }
 }
 
+#[derive(Debug)]
 enum NetworkError {
     SendFailed,
     ReceiveFailed,
@@ -32,6 +57,7 @@ enum NetworkError {
 pub struct InMemoryChannelNetwork {
     pub incoming: Receiver<Message>,
     pub outgoing: HashMap<PeerID, Sender<Message>>,
+    pub idle_time_secs: u64
 }
 
 impl InMemoryChannelNetwork {
@@ -44,7 +70,7 @@ impl InMemoryChannelNetwork {
 
     fn receive(&self) -> Result<Message, NetworkError> {
         self.incoming
-            .recv() 
+            .recv()
             .map_err(|_| NetworkError::ReceiveFailed)
     }
 }
