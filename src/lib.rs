@@ -44,7 +44,8 @@ impl Peer {
 
             match network.incoming.try_recv() {
                 Ok(msg) => println!("{:?} received: {:?}", self.id, msg),
-                Err(e) => if e != TryRecvError::Empty {println!("Error encountered: {}", e)},
+                Err(TryRecvError::Empty) => (),
+                Err(error) => eprintln!("{error}"),
             }
 
             sleep(Duration::from_secs(network.idle_time_secs));
