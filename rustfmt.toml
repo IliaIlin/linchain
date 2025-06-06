@@ -1,0 +1,4 @@
+# Limit to at most 1 blank line in a row
+blank_lines_upper_bound = 1
+# Ensure at least 0 blank lines (default)
+blank_lines_lower_bound = 0
