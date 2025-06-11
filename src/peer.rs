@@ -2,48 +2,71 @@ use crate::blockchain::{
     Address, Hash, PublicKey, SignedBlock, SignedTransaction, UnsignedBlock, UnsignedTransaction,
 };
 use crate::crypto::{sign_ecdsa, verify_ecdsa};
-use crate::network::Message::PeerTransaction;
-use crate::network::{InMemoryChannelNetwork, Message};
+use crate::network::Message::{NewBlock, PeerTransaction};
+use crate::network::{Message, NetworkEvent, P2PMdnsNetwork};
 use crate::storage::FileStorage;
 use derive_more::Display;
+use futures::StreamExt;
 use k256::ecdsa::SigningKey;
+use libp2p::gossipsub::IdentTopic;
+use libp2p::swarm::SwarmEvent;
+use libp2p::{Swarm, mdns};
 use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::error::Error;
-use std::{collections::HashMap, sync::mpsc::TryRecvError};
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone, Display)]
 pub struct PeerID(pub u32);
 
 pub struct Peer {
-    pub id: PeerID,
     pub mempool: MemPool,
 }
 
 impl Peer {
-    pub fn new(id: PeerID, block_size: usize) -> Self {
+    pub fn new(block_size: usize) -> Self {
         Self {
-            id,
             mempool: MemPool::new(block_size),
         }
     }
 
-    pub fn run(
+    pub async fn run(
         &mut self,
         private_key: redact::Secret<&SigningKey>,
-        network: &InMemoryChannelNetwork,
         state: &mut State,
         file_storage: &FileStorage,
+        mut swarm: Swarm<P2PMdnsNetwork>,
+        topic: IdentTopic,
     ) {
+        let mut dialing_peers = HashSet::new();
+
         loop {
-            match network.incoming.try_recv() {
-                Ok(msg) => match msg {
+            match swarm.select_next_some().await {
+                SwarmEvent::Behaviour(NetworkEvent::Mdns(mdns::Event::Discovered(list))) => {
+                    for (peer_id, addr) in list {
+                        if !swarm.is_connected(&peer_id) && !dialing_peers.contains(&peer_id) {
+                            println!("Discovered peer: {}, dialing...", peer_id);
+                            dialing_peers.insert(peer_id.clone());
+                            let _ = swarm.dial(addr.clone());
+                        }
+                    }
+                }
+                SwarmEvent::Behaviour(NetworkEvent::Mdns(mdns::Event::Expired(list))) => {
+                    for (peer_id, _) in list {
+                        swarm
+                            .disconnect_peer_id(peer_id)
+                            .expect("Panicking at peer disconnect");
+                    }
+                }
+                SwarmEvent::Behaviour(NetworkEvent::Application(message)) => match message {
                     Message::ClientTransaction(transaction) => {
                         if let Err(e) = self.process_transaction(
                             private_key,
                             transaction,
-                            network,
                             state,
                             file_storage,
+                            &mut swarm,
+                            &topic,
                         ) {
                             eprintln!("Transaction processing failed due to: {e}");
                         }
@@ -53,20 +76,37 @@ impl Peer {
                             if let Err(e) = self.process_transaction(
                                 private_key,
                                 transaction,
-                                network,
                                 state,
                                 file_storage,
+                                &mut swarm,
+                                &topic,
                             ) {
                                 eprintln!("Transaction processing failed due to: {e}");
                             }
                         }
                     }
-                    Message::NewBlock(_) => {
+                    NewBlock(_) => {
                         unimplemented!("currently out of scope")
                     }
                 },
-                Err(TryRecvError::Empty) => (),
-                Err(error) => eprintln!("{error}"),
+                SwarmEvent::NewListenAddr { address, .. } => {
+                    println!("Listening on {:?}", address);
+                }
+                SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                    dialing_peers.remove(&peer_id);
+                    swarm
+                        .behaviour_mut()
+                        .pub_sub
+                        .subscribe(&topic)
+                        .expect("Failed to subscribe");
+                    println!("Connected to: {}", peer_id);
+                }
+                SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                    dialing_peers.remove(&peer_id);
+                    swarm.behaviour_mut().pub_sub.unsubscribe(&topic);
+                    println!("Disconnected from: {}", peer_id);
+                }
+                _ => {}
             }
         }
     }
@@ -75,9 +115,10 @@ impl Peer {
         &mut self,
         private_key: redact::Secret<&SigningKey>,
         transaction: SignedTransaction,
-        network: &InMemoryChannelNetwork,
         state: &mut State,
         file_storage: &FileStorage,
+        swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
     ) -> Result<(), Box<dyn Error>> {
         verify_ecdsa(
             &transaction,
@@ -86,37 +127,38 @@ impl Peer {
         )?;
         self.mempool.add_new_transaction(transaction.clone());
         if self.mempool.has_reached_max_size() {
-            self.process_new_own_block(private_key, state, network, file_storage)?;
+            self.process_new_own_block(private_key, state, file_storage, swarm, topic)?;
         }
-        let errors = network.broadcast_to_all(PeerTransaction(transaction));
-        Self::combine_multiple_broadcasting_issues_to_result(errors)
+        let transaction_bytes = bcs::to_bytes(&PeerTransaction(transaction))?;
+        swarm
+            .behaviour_mut()
+            .pub_sub
+            .publish(topic.clone(), transaction_bytes)
+            .map(|_| Ok(()))
+            .map_err(|e| Box::new(e) as Box<dyn Error>)?
     }
 
     fn process_new_own_block(
         &mut self,
         private_key: redact::Secret<&SigningKey>,
         state: &mut State,
-        network: &InMemoryChannelNetwork,
         file_storage: &FileStorage,
+        swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
     ) -> Result<(), Box<dyn Error>> {
         let new_signed_block = self.create_and_sign_new_block(private_key, state);
         file_storage
             .save_block(&new_signed_block)
             .expect("Failed to store block");
         state.recalculate_state(&new_signed_block)?;
-        let errors = network.broadcast_to_all(Message::NewBlock(new_signed_block));
-        Self::combine_multiple_broadcasting_issues_to_result(errors)
-    }
 
-    fn combine_multiple_broadcasting_issues_to_result<T: ToString, I: IntoIterator<Item = T>>(
-        issues: I,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let issues_vec: Vec<String> = issues.into_iter().map(|e| e.to_string()).collect();
-        if issues_vec.is_empty() {
-            Ok(())
-        } else {
-            Err(issues_vec.join(", ").into())
-        }
+        let new_block_bytes = bcs::to_bytes(&NewBlock(new_signed_block))?;
+        swarm
+            .behaviour_mut()
+            .pub_sub
+            .publish(topic.clone(), new_block_bytes)
+            .map(|_| Ok(()))
+            .map_err(|e| Box::new(e) as Box<dyn Error>)?
     }
 
     fn create_and_sign_new_block(
@@ -257,47 +299,3 @@ impl State {
         Ok(())
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use crate::blockchain::{Transaction, TransactionInfo};
-//     use crate::network::{InMemoryChannelNetwork, Message};
-//     use crate::peer::{AssetName, Peer, PeerID, State};
-//     use crate::storage::MockStorage;
-//     use chrono::{DateTime, Utc};
-//     use std::collections::HashMap;
-//     use std::sync::mpsc;
-//     use std::sync::mpsc::{Receiver, Sender};
-//
-//     #[test]
-//     fn client_sends_transaction_to_peer_signature_verified() {
-//         let mut storage = MockStorage::new();
-//
-//         storage
-//             .expect_load_all_blocks()
-//             .returning(|| Ok(Vec::new()));
-//
-//         let state = State::build_from_storage(storage);
-//
-//         let (tx, rx): (Sender<Message>, Receiver<Message>) = mpsc::channel();
-//         let network = InMemoryChannelNetwork {
-//             incoming: rx,
-//             outgoing: HashMap::new(),
-//         };
-//         let timestamp: DateTime<Utc> = "2025-05-30T14:00:00Z".parse().unwrap();
-//         let transaction = Transaction::ValueTransferTransaction {
-//             sender_addr: "sender1".to_string(),
-//             receiver_addr: "receiver1".to_string(),
-//             info: TransactionInfo {
-//                 amount: 3,
-//                 asset_name: AssetName::ETH,
-//                 timestamp,
-//                 signature: "signature1".to_string(),
-//             },
-//         };
-//
-//         let peer = Peer::new(PeerID(0), 2);
-//
-//         let _ = tx.send(Message::ClientTransaction(transaction));
-//     }
-// }

@@ -5,7 +5,7 @@ use std::{error::Error, fs::OpenOptions, io::Write};
 pub use mockall::automock;
 
 pub struct FileStorage {
-    filename: String,
+    pub filename: String,
 }
 
 #[cfg_attr(test, automock)]
@@ -26,6 +26,17 @@ impl FileStorage {
     }
 
     pub fn load_all_blocks(&self) -> Result<Vec<SignedBlock>, Box<dyn Error>> {
+        serde_jsonlines::json_lines(&self.filename)?
+            .collect::<Result<Vec<SignedBlock>, _>>()
+            .map_err(|e| e.into())
+    }
+
+    pub fn load_all_blocks_if_file_exists(&self) -> Result<Vec<SignedBlock>, Box<dyn Error>> {
+        if !std::path::Path::new(&self.filename).exists() {
+            std::fs::File::create(&self.filename)?;
+            return Ok(Vec::new());
+        }
+
         serde_jsonlines::json_lines(&self.filename)?
             .collect::<Result<Vec<SignedBlock>, _>>()
             .map_err(|e| e.into())
