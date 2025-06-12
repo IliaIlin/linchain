@@ -38,7 +38,6 @@ pub struct TransactionInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SignedBlock {
-    #[serde(flatten)]
     pub block: UnsignedBlock,
     pub signature: String,
     pub public_key: PublicKey,

@@ -12,17 +12,17 @@ use peer::crypto::sign_ecdsa;
 use peer::network;
 use peer::network::{Message, NetworkEvent, P2PMdnsNetwork};
 use peer::peer::AssetName;
+use serde::Deserialize;
 use std::collections::HashSet;
 use tokio::time::interval;
 use tracing_subscriber::EnvFilter;
 
-const LISTENING_NETWORK_ADDRESS: &str = "/ip4/0.0.0.0/tcp/0";
-const TOPIC_NAME: &str = "linchain_topic";
-const STAY_ALIVE_SECS: u64 = 120;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut swarm = setup_network()?;
-    let topic = IdentTopic::new(TOPIC_NAME);
+    dotenvy::dotenv().ok();
+    let env_config = envy::from_env::<EnvConfig>()?;
+    let mut swarm = setup_network(&env_config)?;
+    let topic = IdentTopic::new(env_config.topic_name.clone());
 
     let mut timer = interval(std::time::Duration::from_secs(5));
     let mut dialing_peers = HashSet::new();
@@ -80,15 +80,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn setup_network() -> Result<Swarm<P2PMdnsNetwork>, Box<dyn std::error::Error>> {
+fn setup_network(
+    env_config: &EnvConfig,
+) -> Result<Swarm<P2PMdnsNetwork>, Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
-    let mut swarm =
-        network::build_p2p_network_swarm(STAY_ALIVE_SECS).expect("Failed to build swarm");
-    swarm.listen_on(LISTENING_NETWORK_ADDRESS.parse().expect(&format!(
+    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)
+        .expect("Failed to build swarm");
+    swarm.listen_on(env_config.network_address.parse().expect(&format!(
         "Fatal: address {} can't be listened on",
-        LISTENING_NETWORK_ADDRESS
+        env_config.network_address
     )))?;
     Ok(swarm)
 }
@@ -109,4 +111,11 @@ fn create_and_sign_topup_transaction(address: Address) -> SignedTransaction {
         signature,
         public_key,
     }
+}
+
+#[derive(Deserialize, Debug)]
+struct EnvConfig {
+    stay_alive_secs: u64,
+    network_address: String,
+    topic_name: String,
 }

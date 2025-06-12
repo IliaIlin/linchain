@@ -1,33 +1,47 @@
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::rand_core::OsRng;
+use libp2p::Swarm;
 use libp2p::gossipsub::IdentTopic;
 use peer::network;
+use peer::network::P2PMdnsNetwork;
 use peer::peer::{Peer, State};
 use peer::storage::FileStorage;
+use serde_derive::Deserialize;
 use tracing_subscriber::EnvFilter;
 
-// read those props from config or from command line args?
-const LISTENING_NETWORK_ADDRESS: &str = "/ip4/0.0.0.0/tcp/0";
-const TOPIC_NAME: &str = "linchain_topic";
-const STAY_ALIVE_SECS: u64 = 120;
-const BLOCK_SIZE: usize = 2;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
+    let env_config = envy::from_env::<EnvConfig>()?;
+    let swarm = setup_network(&env_config)?;
+    create_peer_and_run(&env_config, swarm).await
+}
+
+fn setup_network(
+    env_config: &EnvConfig,
+) -> Result<Swarm<P2PMdnsNetwork>, Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
 
-    let mut swarm =
-        network::build_p2p_network_swarm(STAY_ALIVE_SECS).expect("Failed to build swarm");
-    swarm.listen_on(LISTENING_NETWORK_ADDRESS.parse().expect(&format!(
+    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)
+        .expect("Failed to build swarm");
+    swarm.listen_on(env_config.network_address.parse().expect(&format!(
         "Fatal: address {} can't be listened on",
-        LISTENING_NETWORK_ADDRESS
+        env_config.network_address
     )))?;
-    let topic = IdentTopic::new(TOPIC_NAME);
+    Ok(swarm)
+}
 
-    let mut peer = Peer::new(BLOCK_SIZE);
+async fn create_peer_and_run(
+    env_config: &EnvConfig,
+    swarm: Swarm<P2PMdnsNetwork>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let topic = IdentTopic::new(env_config.topic_name.to_string());
+
+    let mut peer = Peer::new(env_config.block_size);
     let storage = FileStorage {
-        filename: "1.jsonl".to_string(),
+        filename: env_config.storage_filename.to_string(),
     };
     let mut initial_state = State::initialize(storage.load_all_blocks_if_file_exists()?)
         .expect("Failed to initialize state");
@@ -42,4 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await;
     Ok(())
+}
+
+#[derive(Deserialize, Debug)]
+struct EnvConfig {
+    stay_alive_secs: u64,
+    network_address: String,
+    topic_name: String,
+    storage_filename: String,
+    block_size: usize,
 }

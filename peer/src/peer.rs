@@ -10,10 +10,9 @@ use futures::StreamExt;
 use k256::ecdsa::SigningKey;
 use libp2p::gossipsub::IdentTopic;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{Swarm, gossipsub, mdns};
+use libp2p::{Multiaddr, PeerId, Swarm, gossipsub, mdns};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::error::Error;
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone, Display)]
@@ -38,96 +37,135 @@ impl Peer {
         mut swarm: Swarm<P2PMdnsNetwork>,
         topic: IdentTopic,
     ) {
-        let mut dialing_peers = HashSet::new();
-
         loop {
             match swarm.select_next_some().await {
                 SwarmEvent::Behaviour(NetworkEvent::Mdns(mdns::Event::Discovered(list))) => {
-                    for (peer_id, addr) in list {
-                        if !swarm.is_connected(&peer_id) && !dialing_peers.contains(&peer_id) {
-                            println!("Discovered peer: {}, dialing...", peer_id);
-                            dialing_peers.insert(peer_id.clone());
-                            let _ = swarm.dial(addr.clone());
-                        }
-                    }
+                    Self::process_peer_discovery(&mut swarm, list);
                 }
                 SwarmEvent::Behaviour(NetworkEvent::Mdns(mdns::Event::Expired(list))) => {
-                    for (peer_id, _) in list {
-                        swarm
-                            .disconnect_peer_id(peer_id)
-                            .expect("Panicking at peer disconnect");
-                    }
+                    Self::process_peer_expiry(&mut swarm, list);
                 }
                 SwarmEvent::Behaviour(NetworkEvent::GossipSub(gossipsub::Event::Message {
-                    propagation_source,
+                    propagation_source: _propagation_source,
                     message_id: _message_id,
                     message,
                 })) => {
-                    println!(
-                        "Received from {:?} on {:?}",
-                        propagation_source, message.topic
-                    );
-                    let unwrapped_message = match bcs::from_bytes::<Message>(&*message.data) {
-                        Ok(decoded) => decoded,
-                        Err(e) => {
-                            println!("Failed to decode message: {e}");
-                            continue;
-                        }
-                    };
-                    match unwrapped_message {
-                        Message::ClientTransaction(transaction) => {
-                            if let Err(e) = self.process_transaction(
-                                private_key,
-                                transaction,
-                                state,
-                                file_storage,
-                                &mut swarm,
-                                &topic,
-                            ) {
-                                eprintln!("Transaction processing failed due to: {e}");
-                            } else {
-                                println!("Transaction processed successfully");
-                            }
-                        }
-                        PeerTransaction(transaction) => {
-                            if !self.mempool.transactions_mem_pool.contains(&transaction) {
-                                if let Err(e) = self.process_transaction(
-                                    private_key,
-                                    transaction,
-                                    state,
-                                    file_storage,
-                                    &mut swarm,
-                                    &topic,
-                                ) {
-                                    eprintln!("Transaction processing failed due to: {e}");
-                                }
-                            }
-                        }
-                        NewBlock(_) => {
-                            unimplemented!("currently out of scope")
-                        }
+                    if self.process_message_from_topic(
+                        private_key,
+                        state,
+                        file_storage,
+                        &mut swarm,
+                        &topic,
+                        message,
+                    ) {
+                        continue;
                     }
                 }
                 SwarmEvent::NewListenAddr { address, .. } => {
                     println!("Listening on {:?}", address);
                 }
                 SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                    dialing_peers.remove(&peer_id);
-                    swarm
-                        .behaviour_mut()
-                        .pub_sub
-                        .subscribe(&topic)
-                        .expect("Failed to subscribe");
-                    println!("Connected to: {}", peer_id);
+                    Self::process_peer_connect(&mut swarm, &topic, &peer_id);
                 }
                 SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                    dialing_peers.remove(&peer_id);
-                    swarm.behaviour_mut().pub_sub.unsubscribe(&topic);
-                    println!("Disconnected from: {}", peer_id);
+                    Self::process_peer_disconnect(&mut swarm, &topic, &peer_id);
                 }
                 _ => {}
             }
         }
+    }
+
+    fn process_peer_discovery(swarm: &mut Swarm<P2PMdnsNetwork>, list: Vec<(PeerId, Multiaddr)>) {
+        for (peer_id, addr) in list {
+            if !swarm.is_connected(&peer_id) {
+                println!("Discovered peer: {}, dialing...", peer_id);
+                let _ = swarm.dial(addr.clone());
+            }
+        }
+    }
+
+    fn process_peer_expiry(swarm: &mut Swarm<P2PMdnsNetwork>, list: Vec<(PeerId, Multiaddr)>) {
+        for (peer_id, _) in list {
+            swarm
+                .disconnect_peer_id(peer_id)
+                .expect("Panicking at peer disconnect");
+        }
+    }
+
+    fn process_peer_connect(
+        swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
+        peer_id: &PeerId,
+    ) {
+        swarm
+            .behaviour_mut()
+            .pub_sub
+            .subscribe(&topic)
+            .expect("Failed to subscribe");
+        println!("Connected to: {}", peer_id);
+    }
+
+    fn process_peer_disconnect(
+        swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
+        peer_id: &PeerId,
+    ) {
+        swarm.behaviour_mut().pub_sub.unsubscribe(&topic);
+        println!("Disconnected from: {}", peer_id);
+    }
+
+    fn process_message_from_topic(
+        &mut self,
+        private_key: redact::Secret<&SigningKey>,
+        state: &mut State,
+        file_storage: &FileStorage,
+        mut swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
+        message: gossipsub::Message,
+    ) -> bool {
+        let unwrapped_message = match bcs::from_bytes::<Message>(&*message.data) {
+            Ok(decoded) => decoded,
+            Err(e) => {
+                println!("Failed to decode message: {e}");
+                return true;
+            }
+        };
+        match unwrapped_message {
+            Message::ClientTransaction(transaction) => {
+                if let Err(e) = self.process_transaction(
+                    private_key,
+                    transaction,
+                    state,
+                    file_storage,
+                    &mut swarm,
+                    &topic,
+                ) {
+                    eprintln!("Client transaction processing failed due to: {e}");
+                } else {
+                    println!("Client transaction processed successfully");
+                }
+            }
+            PeerTransaction(transaction) => {
+                if !self.mempool.transactions_mem_pool.contains(&transaction) {
+                    if let Err(e) = self.process_transaction(
+                        private_key,
+                        transaction,
+                        state,
+                        file_storage,
+                        &mut swarm,
+                        &topic,
+                    ) {
+                        eprintln!("Peer transaction processing failed due to: {e}");
+                    } else {
+                        println!("Peer transaction processed successfully");
+                    }
+                }
+            }
+            NewBlock(_) => {
+                println!("New block received, but no-op impl currently");
+            }
+        }
+        false
     }
 
     fn process_transaction(
@@ -149,12 +187,7 @@ impl Peer {
             self.process_new_own_block(private_key, state, file_storage, swarm, topic)?;
         }
         let transaction_bytes = bcs::to_bytes(&PeerTransaction(transaction))?;
-        swarm
-            .behaviour_mut()
-            .pub_sub
-            .publish(topic.clone(), transaction_bytes)
-            .map(|_| Ok(()))
-            .map_err(|e| Box::new(e) as Box<dyn Error>)?
+        Self::publish_to_topic(swarm, topic, transaction_bytes)
     }
 
     fn process_new_own_block(
@@ -172,6 +205,14 @@ impl Peer {
         state.recalculate_state(&new_signed_block)?;
 
         let new_block_bytes = bcs::to_bytes(&NewBlock(new_signed_block))?;
+        Self::publish_to_topic(swarm, topic, new_block_bytes)
+    }
+
+    fn publish_to_topic(
+        swarm: &mut Swarm<P2PMdnsNetwork>,
+        topic: &IdentTopic,
+        new_block_bytes: Vec<u8>,
+    ) -> Result<(), Box<dyn Error>> {
         swarm
             .behaviour_mut()
             .pub_sub
@@ -304,15 +345,17 @@ impl State {
     fn recalculate_state(&mut self, new_block: &SignedBlock) -> Result<(), Box<dyn Error>> {
         let accounts_to_update = Self::convert_blocks_to_accounts(vec![new_block.clone()])?;
 
-        for account in accounts_to_update {
-            let existing_account = self
+        for mut account in accounts_to_update {
+            if let Some(existing_account) = self
                 .accounts
                 .iter_mut()
                 .find(|acc| acc.address == account.address)
-                .ok_or_else(|| format!("Account {:?} not found", account.address))?;
-
-            for (asset, amount) in account.assets {
-                *existing_account.assets.entry(asset).or_insert(0) += amount;
+            {
+                for (asset, amount) in account.assets.drain() {
+                    *existing_account.assets.entry(asset).or_insert(0) += amount;
+                }
+            } else {
+                self.accounts.push(account);
             }
         }
         Ok(())
