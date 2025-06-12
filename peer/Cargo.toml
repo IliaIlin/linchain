@@ -20,6 +20,7 @@ libp2p = { version = "0.55.0", features = ["macros", "noise", "ping", "mdns", "t
 futures = "0.3.30"
 tokio = { version = "1.45.1", features = ["full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+bincode = "2.0.1"
 
 [dev-dependencies]
 mockall = "0.13.1"

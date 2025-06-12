@@ -7,11 +7,10 @@ pub type Hash = [u8; 32];
 pub type PublicKey = Vec<u8>;
 
 #[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct Address(PublicKey);
+pub struct Address(pub PublicKey);
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTransaction {
-    #[serde(flatten)]
     pub transaction: UnsignedTransaction,
     pub signature: String,
     pub public_key: PublicKey,
@@ -22,12 +21,10 @@ pub enum UnsignedTransaction {
     ValueTransferTransaction {
         sender_addr: Address,
         receiver_addr: Address,
-        #[serde(flatten)]
         info: TransactionInfo,
     },
     TopUpTransaction {
         receiver_addr: Address,
-        #[serde(flatten)]
         info: TransactionInfo,
     },
 }

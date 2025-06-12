@@ -10,7 +10,7 @@ use futures::StreamExt;
 use k256::ecdsa::SigningKey;
 use libp2p::gossipsub::IdentTopic;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{Swarm, mdns};
+use libp2p::{gossipsub, mdns, Swarm};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -58,21 +58,24 @@ impl Peer {
                             .expect("Panicking at peer disconnect");
                     }
                 }
-                SwarmEvent::Behaviour(NetworkEvent::Application(message)) => match message {
-                    Message::ClientTransaction(transaction) => {
-                        if let Err(e) = self.process_transaction(
-                            private_key,
-                            transaction,
-                            state,
-                            file_storage,
-                            &mut swarm,
-                            &topic,
-                        ) {
-                            eprintln!("Transaction processing failed due to: {e}");
+                SwarmEvent::Behaviour(NetworkEvent::GossipSub(gossipsub::Event::Message {
+                    propagation_source,
+                    message_id: _message_id,
+                    message,
+                })) => {
+                    println!(
+                        "Received from {:?} on {:?}",
+                        propagation_source, message.topic
+                    );
+                    let unwrapped_message = match bcs::from_bytes::<Message>(&*message.data) {
+                        Ok(decoded) => decoded,
+                        Err(e) => {
+                            println!("Failed to decode message: {e}");
+                            continue;
                         }
-                    }
-                    PeerTransaction(transaction) => {
-                        if !self.mempool.transactions_mem_pool.contains(&transaction) {
+                    };
+                    match unwrapped_message {
+                        Message::ClientTransaction(transaction) => {
                             if let Err(e) = self.process_transaction(
                                 private_key,
                                 transaction,
@@ -82,13 +85,29 @@ impl Peer {
                                 &topic,
                             ) {
                                 eprintln!("Transaction processing failed due to: {e}");
+                            } else {
+                                println!("Transaction processed successfully");
                             }
                         }
+                        PeerTransaction(transaction) => {
+                            if !self.mempool.transactions_mem_pool.contains(&transaction) {
+                                if let Err(e) = self.process_transaction(
+                                    private_key,
+                                    transaction,
+                                    state,
+                                    file_storage,
+                                    &mut swarm,
+                                    &topic,
+                                ) {
+                                    eprintln!("Transaction processing failed due to: {e}");
+                                }
+                            }
+                        }
+                        NewBlock(_) => {
+                            unimplemented!("currently out of scope")
+                        }
                     }
-                    NewBlock(_) => {
-                        unimplemented!("currently out of scope")
-                    }
-                },
+                }
                 SwarmEvent::NewListenAddr { address, .. } => {
                     println!("Listening on {:?}", address);
                 }
