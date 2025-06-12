@@ -1,10 +1,10 @@
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::rand_core::OsRng;
 use libp2p::gossipsub::IdentTopic;
+use peer::network;
 use peer::peer::{Peer, State};
 use peer::storage::FileStorage;
 use tracing_subscriber::EnvFilter;
-use peer::network;
 
 // read those props from config or from command line args?
 const LISTENING_NETWORK_ADDRESS: &str = "/ip4/0.0.0.0/tcp/0";
@@ -17,7 +17,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
 
-    let mut swarm = network::build_p2p_network_swarm(STAY_ALIVE_SECS).expect("Failed to build swarm");
+    let mut swarm =
+        network::build_p2p_network_swarm(STAY_ALIVE_SECS).expect("Failed to build swarm");
     swarm.listen_on(LISTENING_NETWORK_ADDRESS.parse().expect(&format!(
         "Fatal: address {} can't be listened on",
         LISTENING_NETWORK_ADDRESS

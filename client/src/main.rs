@@ -4,7 +4,7 @@ use k256::elliptic_curve::rand_core::OsRng;
 use libp2p::futures::StreamExt;
 use libp2p::gossipsub::IdentTopic;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{mdns, Swarm};
+use libp2p::{Swarm, mdns};
 use peer::blockchain::{
     Address, PublicKey, SignedTransaction, TransactionInfo, UnsignedTransaction,
 };

@@ -10,7 +10,7 @@ use futures::StreamExt;
 use k256::ecdsa::SigningKey;
 use libp2p::gossipsub::IdentTopic;
 use libp2p::swarm::SwarmEvent;
-use libp2p::{gossipsub, mdns, Swarm};
+use libp2p::{Swarm, gossipsub, mdns};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -140,7 +140,7 @@ impl Peer {
         topic: &IdentTopic,
     ) -> Result<(), Box<dyn Error>> {
         verify_ecdsa(
-            &transaction,
+            &transaction.transaction,
             &*transaction.signature,
             &transaction.public_key,
         )?;

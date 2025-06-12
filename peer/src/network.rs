@@ -2,7 +2,7 @@ use crate::blockchain::{SignedBlock, SignedTransaction};
 use crate::peer::PeerID;
 use libp2p::gossipsub::{Behaviour, Config, MessageAuthenticity};
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{gossipsub, mdns, noise, tcp, yamux, Swarm};
+use libp2p::{Swarm, gossipsub, mdns, noise, tcp, yamux};
 use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
 use std::sync::mpsc::{RecvError, SendError};
@@ -43,7 +43,7 @@ pub struct P2PMdnsNetwork {
 #[derive(Debug)]
 pub enum NetworkEvent {
     Mdns(mdns::Event),
-    GossipSub(gossipsub::Event)
+    GossipSub(gossipsub::Event),
 }
 
 impl From<mdns::Event> for NetworkEvent {
