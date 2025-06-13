@@ -1,6 +1,6 @@
 use k256::ecdsa::SigningKey;
 use k256::elliptic_curve::rand_core::OsRng;
-use libp2p::Swarm;
+use libp2p::{Swarm};
 use libp2p::gossipsub::IdentTopic;
 use peer::network;
 use peer::network::P2PMdnsNetwork;
@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
+    let _ = dotenvy::dotenv();
     let env_config = envy::from_env::<EnvConfig>()?;
     let swarm = setup_network(&env_config)?;
     create_peer_and_run(&env_config, swarm).await
@@ -24,12 +24,8 @@ fn setup_network(
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
 
-    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)
-        .expect("Failed to build swarm");
-    swarm.listen_on(env_config.network_address.parse().expect(&format!(
-        "Fatal: address {} can't be listened on",
-        env_config.network_address
-    )))?;
+    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)?;
+    swarm.listen_on(env_config.network_address.clone())?;
     Ok(swarm)
 }
 
@@ -61,7 +57,7 @@ async fn create_peer_and_run(
 #[derive(Deserialize, Debug)]
 struct EnvConfig {
     stay_alive_secs: u64,
-    network_address: String,
+    network_address: libp2p::Multiaddr,
     topic_name: String,
     storage_filename: String,
     block_size: usize,

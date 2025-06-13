@@ -1,13 +1,14 @@
 use crate::peer::AssetName;
 use chrono::{DateTime, Utc};
+use derive_more::From;
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub type Hash = [u8; 32];
 pub type PublicKey = Vec<u8>;
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct Address(pub PublicKey);
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize, From)]
+pub struct Address(PublicKey);
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTransaction {

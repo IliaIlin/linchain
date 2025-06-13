@@ -19,7 +19,7 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
+    let _ = dotenvy::dotenv();
     let env_config = envy::from_env::<EnvConfig>()?;
     let mut swarm = setup_network(&env_config)?;
     let topic = IdentTopic::new(env_config.topic_name.clone());
@@ -27,7 +27,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut timer = interval(std::time::Duration::from_secs(5));
     let mut dialing_peers = HashSet::new();
 
-    let transaction = create_and_sign_topup_transaction(Address(vec![1, 2, 3, 4, 5]));
+    let transaction = create_and_sign_topup_transaction(Address::from(vec![1, 2, 3, 4, 5]));
 
     loop {
         tokio::select! {
@@ -86,12 +86,8 @@ fn setup_network(
     let _ = tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env())
         .try_init();
-    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)
-        .expect("Failed to build swarm");
-    swarm.listen_on(env_config.network_address.parse().expect(&format!(
-        "Fatal: address {} can't be listened on",
-        env_config.network_address
-    )))?;
+    let mut swarm = network::build_p2p_network_swarm(env_config.stay_alive_secs)?;
+    swarm.listen_on(env_config.network_address.clone())?;
     Ok(swarm)
 }
 fn create_and_sign_topup_transaction(address: Address) -> SignedTransaction {
@@ -116,6 +112,6 @@ fn create_and_sign_topup_transaction(address: Address) -> SignedTransaction {
 #[derive(Deserialize, Debug)]
 struct EnvConfig {
     stay_alive_secs: u64,
-    network_address: String,
+    network_address: libp2p::Multiaddr,
     topic_name: String,
 }
