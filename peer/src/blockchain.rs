@@ -1,17 +1,17 @@
 use crate::peer::AssetName;
 use chrono::{DateTime, Utc};
+use derive_more::From;
 use serde_derive::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub type Hash = [u8; 32];
 pub type PublicKey = Vec<u8>;
 
-#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone, Serialize, Deserialize, From)]
 pub struct Address(PublicKey);
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct SignedTransaction {
-    #[serde(flatten)]
     pub transaction: UnsignedTransaction,
     pub signature: String,
     pub public_key: PublicKey,
@@ -22,12 +22,10 @@ pub enum UnsignedTransaction {
     ValueTransferTransaction {
         sender_addr: Address,
         receiver_addr: Address,
-        #[serde(flatten)]
         info: TransactionInfo,
     },
     TopUpTransaction {
         receiver_addr: Address,
-        #[serde(flatten)]
         info: TransactionInfo,
     },
 }
@@ -41,7 +39,6 @@ pub struct TransactionInfo {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SignedBlock {
-    #[serde(flatten)]
     pub block: UnsignedBlock,
     pub signature: String,
     pub public_key: PublicKey,

@@ -1,6 +1,8 @@
 use crate::blockchain::PublicKey;
+use k256::ecdsa::signature::digest::Digest;
 use k256::ecdsa::signature::{Signer, Verifier};
 use k256::ecdsa::{Signature, SigningKey, VerifyingKey};
+use sha2::Sha256;
 use std::error::Error;
 
 pub fn sign_ecdsa<S: serde::Serialize>(
@@ -8,7 +10,8 @@ pub fn sign_ecdsa<S: serde::Serialize>(
     signing_key: &SigningKey,
 ) -> Result<String, Box<dyn Error>> {
     let serialized = bcs::to_bytes(&data)?;
-    let signature: Signature = signing_key.sign(&serialized);
+    let digest = Sha256::new_with_prefix(serialized).finalize();
+    let signature: Signature = signing_key.sign(&digest);
     Ok(hex::encode(signature.to_bytes()))
 }
 
@@ -19,9 +22,10 @@ pub fn verify_ecdsa<S: serde::Serialize>(
 ) -> Result<bool, Box<dyn Error>> {
     let verifying_key = VerifyingKey::from_sec1_bytes(public_key)?;
     let serialized = bcs::to_bytes(&data)?;
+    let digest = Sha256::new_with_prefix(serialized).finalize();
     let signature_bytes = hex::decode(signature_hex)?;
     let signature = Signature::from_slice(&signature_bytes)?;
-    match verifying_key.verify(&serialized, &signature) {
+    match verifying_key.verify(&digest, &signature) {
         Ok(_) => Ok(true),
         Err(e) => Err(e.into()),
     }
