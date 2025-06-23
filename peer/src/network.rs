@@ -2,7 +2,7 @@ use crate::blockchain::{SignedBlock, SignedTransaction};
 use derive_more::From;
 use libp2p::gossipsub::{Config, MessageAuthenticity};
 use libp2p::swarm::NetworkBehaviour;
-use libp2p::{Swarm, gossipsub, mdns, noise, tcp, yamux};
+use libp2p::{PeerId, Swarm, gossipsub, mdns, noise, tcp, yamux};
 use serde_derive::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
@@ -11,6 +11,19 @@ use std::time::Duration;
 pub enum Message {
     ClientTransaction(SignedTransaction),
     PeerTransaction(SignedTransaction),
+    LeaderProposal {
+        term: u64,
+        candidate_id: PeerId,
+    },
+    LeaderVote {
+        term: u64,
+        voter_id: PeerId,
+        granted: bool,
+    },
+    Heartbeat {
+        term: u64,
+        leader_id: PeerId,
+    },
     NewBlock(SignedBlock),
 }
 
